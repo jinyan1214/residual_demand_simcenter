@@ -19,7 +19,11 @@ from multiprocessing import Pool
 random.seed(1)
 np.random.seed(1)
 
-def substep_assignment(nodes_df=None, weighted_edges_df=None, od_ss=None, quarter_demand=None, assigned_demand=None, quarter_counts=4, trip_info=None, agent_time_limit = 0, sample_interval=1, highway_list = [], agents_path = None, hour=None, quarter=None, ss_id=None, alpha_f=0.3, beta_f=3):
+def substep_assignment(nodes_df=None, weighted_edges_df=None, od_ss=None, 
+                       quarter_demand=None, assigned_demand=None, quarter_counts=4, 
+                       trip_info=None, agent_time_limit = 0, sample_interval=1, 
+                       highway_list = [], agents_path = None, hour=None, quarter=None, 
+                       ss_id=None, alpha_f=0.3, beta_f=3, final_step = False):
 
     open_edges_df = weighted_edges_df.loc[weighted_edges_df['fft']<36000]
 
@@ -66,13 +70,18 @@ def substep_assignment(nodes_df=None, weighted_edges_df=None, od_ss=None, quarte
             path_i += 1
             # no need to update trip info
             continue
-        remaining_time = 3600/quarter_counts + agent_current_link_times[path_i]
+        if final_step:
+            remaining_time = np.inf
+            # print(f"final_step is {final_step} and remaining_time is {remaining_time}")
+        else:
+            remaining_time = 3600/quarter_counts + agent_current_link_times[path_i]
         used_time = 0
         for edge_s, edge_e in zip(p, p[1:]):
             edge_str = "{}-{}".format(edge_s, edge_e)
             edge_travel_time = edge_travel_time_dict[edge_str]
             
-            if (remaining_time > edge_travel_time) and (edge_travel_time < 36000):
+            # if (remaining_time > edge_travel_time) and (edge_travel_time < 36000):
+            if (remaining_time > edge_travel_time):
                 # all_paths.append(edge_str)
                 # p_dist += edge_travel_time
                 remaining_time -= edge_travel_time
@@ -143,7 +152,8 @@ def assignment(quarter_counts=6, substep_counts=15, substep_size=30000, edges_df
     edges_df['veh_current'] = 0
     
     ### Loop through days and hours
-    for day in ['na']:
+    day_list = ['na']
+    for day in day_list:
         for hour in hour_list:
             gc.collect()
             if hour in closure_hours:
@@ -187,7 +197,8 @@ def assignment(quarter_counts=6, substep_counts=15, substep_size=30000, edges_df
                 assigned_demand = 0
 
                 substep_counts = max(1, (quarter_demand // substep_size) + 1)
-                logging.info('HR {} QT {} has {}/{} ods/residuals {} substeps'.format(hour, quarter, quarter_demand, residual_demand, substep_counts))
+                # logging.info('HR {} QT {} has {}/{} ods/residuals {} substeps'.format(hour, quarter, quarter_demand, residual_demand, substep_counts))
+                print('HR {} QT {} has {}/{} ods/residuals {} substeps'.format(hour, quarter, quarter_demand, residual_demand, substep_counts))
                 substep_ps = [1/substep_counts for i in range(substep_counts)] 
                 substep_ids = [i for i in range(substep_counts)]
                 od_substep_msk = np.random.choice(substep_ids, size=quarter_demand, p=substep_ps)
@@ -216,6 +227,14 @@ def assignment(quarter_counts=6, substep_counts=15, substep_size=30000, edges_df
                     weighted_edges_df['weight'] = edges_df['t_avg']
                     # weighted_edges_df['weight'] = np.where(weighted_edges_df['weight']<0.1, 0.1, weighted_edges_df['weight'])
 
+                    ### If simulating the last quarter, release the "remaining time" constraint in
+                    # substep_assignment. This will give a better travel_time_used estimation for 
+                    # agents remaining on links at the end of simulation
+                    if (day == day_list[-1]) and (hour == hour_list[-1]) and (quarter == quarter_list[-1]):
+                        final_step = True
+                    else:
+                        final_step = False
+                    print(f"final_step is {final_step}")
                     ### traffic assignment with truncated path
                     edges_df, od_residual_ss_list, trip_info, agents_path = substep_assignment(nodes_df=nodes_df, 
                                                                                                weighted_edges_df=weighted_edges_df, 
@@ -232,11 +251,13 @@ def assignment(quarter_counts=6, substep_counts=15, substep_size=30000, edges_df
                                                                                                quarter=quarter, 
                                                                                                ss_id=ss_id, 
                                                                                                alpha_f=alpha_f, 
-                                                                                               beta_f=beta_f)
+                                                                                               beta_f=beta_f,
+                                                                                               final_step = final_step)
 
                     od_residual_list += od_residual_ss_list
                     # write_edge_vol(edges_df=edges_df, simulation_outputs=simulation_outputs, quarter=quarter, hour=hour, scen_nm='ss{}_{}'.format(ss_id, scen_nm))
-                    logging.info('HR {} QT {} SS {} finished, max vol {}, time {}'.format(hour, quarter, ss_id, np.max(edges_df['vol_true']), time.time()-time_ss_0))
+                    # logging.info('HR {} QT {} SS {} finished, max vol {}, time {}'.format(hour, quarter, ss_id, np.max(edges_df['vol_true']), time.time()-time_ss_0))
+                    print('HR {} QT {} SS {} finished, max vol {}, time {}'.format(hour, quarter, ss_id, np.max(edges_df['vol_true']), time.time()-time_ss_0))
                 
                 ### write quarterly results
                 edges_df['vol_tot'] += edges_df['vol_true']
